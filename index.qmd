@@ -1,0 +1,116 @@
+---
+title: "Relatório Reprodutível: Chuvas em Araraquara-SP"
+format: html
+date: today
+author: "Guilherme Batistuti"
+lang: pt
+---
+
+## Objetivo
+
+O objetivo desse relatório é servir como exemplo para o uso do pacote *Quarto* na *linguagem R* montando um relatório reprodutível e com elementos gráficos disponível na web via GitHub. Tal relatório foi criado no contexto de atender aos pré-requisitos de trabalho final para o curso do Programa de Verão do IME - USP "Relatório Reprodutíveis com R" ministrado pela prof.ª Beatriz Milz entre Janeiro e Fevereiro/2022.
+
+Para o exemplo, usaremos dados sobre chuvas na região do município de Araraquara (SP) no período do últimos 5 anos disponibilizados pela ANA - Agência Nacional de Águas e Saneamento Básico. Mais especificamente, este relatório abrange:
+
+-   Uso do pacote *XML* para extração automática de dados na web;
+-   Tratamento dos dados em modelo de DataFrame usando pacote *dplyr*;
+-   Apresentação visual dos dados em tabelas e gráficos (gerados pelo pacote *ggplot2*)
+
+Por fim, este relatório não tem como função alcançar nenhuma conclusão objetiva sobre os dados apresentados ou gerar insumos para qualquer tipo de tomada de decisão, sendo apenas este um exercício das ferramentas apresentadas e reprodutibiilidade.
+
+## Carregando pacotes necessários
+
+```{r}
+#| warning: false
+
+# Pacotes necessários para o relatório:
+
+library(tidyverse)
+library(XML)
+library(ggplot2)
+```
+
+## Download e Tratamento de Dados
+
+### Download de Dados (Base ServiceANA)
+
+```{r}
+# Parâmetros para link:
+baseLink = "http://telemetriaws1.ana.gov.br/ServiceANA.asmx/DadosHidrometeorologicos?"
+codEstacao = "62776450"
+dataInicio = "01/01/2018"
+dataFim = "31/12/2023"
+
+linkCompleto = paste0(baseLink, "codEstacao=", codEstacao, "&dataInicio=", dataInicio,
+                      "&dataFim=", dataFim)
+
+dados_xml = xmlParse(linkCompleto)
+
+df_dados = xmlToDataFrame(getNodeSet(dados_xml, "//DocumentElement/DadosHidrometereologicos"))
+
+dplyr::glimpse(df_dados)
+
+```
+
+Os dados são obtidos da base [Service ANA](https://telemetriaws1.ana.gov.br/ServiceANA.asmx) que é atualizada em intervalos de 30 minutos. O dado mais recente coletado na base é de `r df_dados[1 , 2]`
+
+![](img/serviceana_logo.png){fig-align="left"}
+
+### Tratamento dos Dados
+
+```{r}
+#| warning: false
+
+# Adicionando colunas para agrupar dados em visões agrupadas:
+
+# Convertando colunas
+df_dados$Data = as.POSIXct(df_dados$DataHora)
+df_dados = df_dados |>
+  dplyr::mutate(Chuva = as.numeric(Chuva),
+                Nivel = as.numeric(Nivel))
+
+# Criando tabela auxiliar para obter valores mínimos e máximos mensais
+df_summary = df_dados |>
+  dplyr::group_by(Ano = lubridate::year(Data), Mes = lubridate::month(Data)) |>
+  dplyr::summarize(ChuvaTotal = sum(Chuva),  MinimoNivel = min(Nivel), MaximoNivel = max(Nivel)) |>
+  ungroup()
+
+colnames(df_summary)[1:2] = c("Ano", "Mês")
+
+```
+
+## Dados sobre volume de Chuvas e Nível
+
+Usando os dados agrupados acima, podemos exibir uma tabela com os valores de precipitação total registrada, níveis mínimos e máximos para cada um dos mesês no período analisado:
+
+```{r}
+
+# Tabela com dados agrupados:
+
+df_summary |>
+  knitr::kable()
+
+```
+
+Infelizmente a base de dados contém vários períodos sem informações de chuvas (evidenciado pelos valore 'NA') e está sem o período de Fevereiro/2020 até Setembro/2022.
+
+Sabendo disso, podemos montar nosso gráfico com a série histórica a partir de Outubro/2022.
+
+```{r}
+#| warning: false
+
+# Filtrando dados para apenas após Outubro/2022:
+
+df_filtrado = df_dados |>
+  filter(Data >= as.Date("2022-10-01"))
+
+# Gráficos com séries históricas:
+
+ggplot2::ggplot(df_filtrado) +
+  geom_bar(aes(x=Data, y=Chuva*50), stat="identity", fill = "steelblue") +
+  geom_line(aes(x=Data, y=Nivel, group=1), stat="identity", color = "darkgreen") +
+  scale_y_continuous(name = "Nivel do Rio", sec.axis = sec_axis(~./50, name = "Volume de Chuvas")) +
+  labs(title = "Série Histórica")
+  
+
+```
